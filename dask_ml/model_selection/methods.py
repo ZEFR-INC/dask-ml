@@ -172,6 +172,9 @@ def cv_extract(cvs, X, y, is_X, is_train_folds, n):
 
 
 def cv_extract_params(cvs, keys, vals, n, is_train_folds):
+    '''
+        cv_extract_params the fit parameters of the fold sets (train folds or test fold)
+    '''
     return {k: cvs.extract_param(tok, v, n, is_train_folds) for (k, tok), v in zip(keys, vals)}
 
 
@@ -390,7 +393,7 @@ def fit_and_score(
     fields=None,
     params=None,
     fit_params=None,
-    fit_test_params=None,
+    test_fit_params=None,
     return_train_score=True,
 ):
     X_train = cv.extract(X, y, n, True, True)
@@ -401,12 +404,13 @@ def fit_and_score(
     '''
         Support for lightGBM evaluation data sets within folds.         
         https: // lightgbm.readthedocs.io / en / latest / pythonapi / lightgbm.LGBMClassifier.html
-
+        
+        Set the test set to the corresponding part of the eval set with the test folds index
     '''
     if 'eval_set' in fit_params:
-        fit_params['eval_set'] = fit_test_params['eval_set']
-        fit_params['eval_names'] = fit_test_params['eval_names']
-        fit_params['eval_sample_weight'] = fit_test_params['eval_sample_weight']
+        fit_params['eval_set'] = test_fit_params['eval_set']
+        fit_params['eval_names'] = test_fit_params['eval_names']
+        fit_params['eval_sample_weight'] = test_fit_params['eval_sample_weight']
 
     est_and_time = fit(est, X_train, y_train, error_score, fields, params, fit_params)
     if not return_train_score:
@@ -414,11 +418,14 @@ def fit_and_score(
 
     eval_sample_weight_train, eval_sample_weight_test = None, None
     if fit_params is not None:
+        '''
+            NOTE: To be back-compatible with dask-ml defaults you could add a boolean (legacy_mode) that can skip the following block if (legacy_mode==True)
+        '''
         eval_weight_source = "eval_sample_weight" if "eval_sample_weight" in fit_params else "sample_weight"
         if eval_weight_source in fit_params and fit_params[eval_weight_source] is not None:
             eval_sample_weight_train = fit_params[eval_weight_source]
-        if eval_weight_source in fit_test_params and fit_test_params[eval_weight_source] is not None:
-            eval_sample_weight_test = fit_test_params[eval_weight_source]
+        if eval_weight_source in test_fit_params and test_fit_params[eval_weight_source] is not None:
+            eval_sample_weight_test = test_fit_params[eval_weight_source]
 
     return score(est_and_time, X_test, y_test, X_train, y_train, scorer, error_score, sample_weight=eval_sample_weight_train, eval_sample_weight=eval_sample_weight_test)
 

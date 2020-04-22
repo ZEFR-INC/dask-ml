@@ -159,7 +159,7 @@ def build_graph(
     ## DO WE NEED TO ADD SUPPORT FOR TPOP AND PATCH?
     if 'sample_weight' in fit_params:
         weights = "cv-n-weights-" + main_token
-        fold_weights = [fld[1][1] for fld in _get_fit_params(cv_name, fit_params, n_splits)]
+        fold_weights = [fld[1][1] for fld in _get_fold_fit_params(cv_name, fit_params, n_splits)]
         dsk[weights] = fold_weights
     elif iid:
         weights = "cv-n-samples-" + main_token
@@ -233,7 +233,7 @@ def build_cv_graph(
     if 'sample_weight' in fit_params:
         weights = "cv-n-weights-" + main_token
         # get test fold weights for all folds
-        fold_weights = [ fld[1][1] for fld in _get_fit_params(cv_name, fit_params, n_splits) ]
+        fold_weights = [fld[1][1] for fld in _get_fold_fit_params(cv_name, fit_params, n_splits)]
         dsk[weights] = fold_weights
     elif iid:
         weights = "cv-n-samples-" + main_token
@@ -304,7 +304,7 @@ def normalize_params(params):
     return fields, tokens, params2
 
 
-def _get_fit_params(cv, fit_params, n_splits):
+def _get_fold_fit_params(cv, fit_params, n_splits):
     '''
         _get_fit_params gets index given by fold number and the fit_params for that folds train folds and test fold
     '''
@@ -344,7 +344,7 @@ def do_fit_and_score(
 ):
     if not isinstance(est, Pipeline):
         # Fitting and scoring can all be done as a single task
-        n_and_fold_fit_params = _get_fit_params(cv, fit_params, n_splits)
+        n_and_fold_fit_params = _get_fold_fit_params(cv, fit_params, n_splits)
 
         est_type = type(est).__name__.lower()
         est_name = "%s-%s" % (est_type, main_token)
@@ -464,7 +464,7 @@ def do_fit(
             False,
         )
     else:
-        n_and_fold_fit_params = _get_fit_params(cv, fit_params, n_splits)
+        n_and_fold_fit_params = _get_fold_fit_params(cv, fit_params, n_splits)
 
         if params is None:
             params = tokens = repeat(None)
@@ -549,7 +549,7 @@ def do_fit_transform(
             error_score,
         )
     else:
-        n_and_fold_fit_params = _get_fit_params(cv, fit_params, n_splits)
+        n_and_fold_fit_params = _get_fold_fit_params(cv, fit_params, n_splits)
 
         if params is None:
             params = tokens = repeat(None)

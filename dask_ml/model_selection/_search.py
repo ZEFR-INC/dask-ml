@@ -155,6 +155,7 @@ def build_graph(
 
 
     cv_name = "cv-split-" + main_token
+
     ## DO WE NEED TO ADD SUPPORT FOR TPOP AND PATCH?
     if 'sample_weight' in fit_params:
         weights = "cv-n-weights-" + main_token
@@ -231,6 +232,7 @@ def build_cv_graph(
 
     if 'sample_weight' in fit_params:
         weights = "cv-n-weights-" + main_token
+        # get test fold weights for all folds
         fold_weights = [ fld[1][1] for fld in _get_fit_params(cv_name, fit_params, n_splits) ]
         dsk[weights] = fold_weights
     elif iid:
@@ -342,7 +344,7 @@ def do_fit_and_score(
 ):
     if not isinstance(est, Pipeline):
         # Fitting and scoring can all be done as a single task
-        n_and_fit_params = _get_fit_params(cv, fit_params, n_splits)
+        n_and_fold_fit_params = _get_fit_params(cv, fit_params, n_splits)
 
         est_type = type(est).__name__.lower()
         est_name = "%s-%s" % (est_type, main_token)
@@ -358,7 +360,7 @@ def do_fit_and_score(
             if t in seen:
                 out_append(seen[t])
             else:
-                for n, fit_params in n_and_fit_params:
+                for n, fld_fit_params in n_and_fold_fit_params:
                     dsk[(score_name, m, n)] = (
                         fit_and_score,
                         est_name,
@@ -370,8 +372,8 @@ def do_fit_and_score(
                         error_score,
                         fields,
                         p,
-                        fit_params[0],
-                        fit_params[1],
+                        fld_fit_params[0],
+                        fld_fit_params[1],
                         return_train_score,
                     )
                 seen[t] = (score_name, m)
@@ -462,7 +464,7 @@ def do_fit(
             False,
         )
     else:
-        n_and_fit_params = _get_fit_params(cv, fit_params, n_splits)
+        n_and_fold_fit_params = _get_fit_params(cv, fit_params, n_splits)
 
         if params is None:
             params = tokens = repeat(None)
@@ -483,7 +485,7 @@ def do_fit(
             if (X, y, t) in seen:
                 out_append(seen[X, y, t])
             else:
-                for n, fit_params in n_and_fit_params:
+                for n, fld_fit_params in n_and_fold_fit_params:
                     dsk[(fit_name, m, n)] = (
                         fit,
                         est_name,
@@ -492,7 +494,7 @@ def do_fit(
                         error_score,
                         fields,
                         p,
-                        fit_params[0],
+                        fld_fit_params[0],
                     )
                 seen[(X, y, t)] = (fit_name, m)
                 out_append((fit_name, m))
@@ -526,7 +528,7 @@ def do_fit_transform(
             params,
             Xs,
             ys,
-            fit_params[0],
+            fit_params,
             n_splits,
             error_score,
             True,
@@ -542,12 +544,12 @@ def do_fit_transform(
             params,
             Xs,
             ys,
-            fit_params[0],
+            fit_params,
             n_splits,
             error_score,
         )
     else:
-        n_and_fit_params = _get_fit_params(cv, fit_params, n_splits)
+        n_and_fold_fit_params = _get_fit_params(cv, fit_params, n_splits)
 
         if params is None:
             params = tokens = repeat(None)
@@ -570,7 +572,7 @@ def do_fit_transform(
             if (X, y, t) in seen:
                 out_append(seen[X, y, t])
             else:
-                for n, fit_params in n_and_fit_params:
+                for n, fld_fit_params in n_and_fold_fit_params:
                     dsk[(fit_Xt_name, m, n)] = (
                         fit_transform,
                         est_name,
@@ -579,7 +581,7 @@ def do_fit_transform(
                         error_score,
                         fields,
                         p,
-                        fit_params[0],
+                        fld_fit_params[0],
                     )
                     dsk[(fit_name, m, n)] = (getitem, (fit_Xt_name, m, n), 0)
                     dsk[(Xt_name, m, n)] = (getitem, (fit_Xt_name, m, n), 1)
@@ -1284,6 +1286,7 @@ class DaskBaseSearchCV(BaseEstimator, MetaEstimatorMixin):
         if ("sample_weight" in fit_params) or ("eval_sample_weight" in fit_params) or self.iid:
             weights = out[0]
             scores = out[1:]
+            # reduce weights in folds to support cross fold averaging
             if "eval_sample_weight" in fit_params:
                 weights = np.array([np.sum(x["eval_sample_weight"]) for x in weights])
             elif "sample_weight" in fit_params:

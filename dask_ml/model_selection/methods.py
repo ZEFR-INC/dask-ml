@@ -114,6 +114,10 @@ class CVCache:
         return self._extract(X, y, n, is_x=False, is_train_folds=is_train_folds)
 
     def extract_param(self, key, x, n, is_train_folds=True):
+        '''
+            extract_param extracts the fit_params associated with a set of folds either train folds or test fold.
+            Also supports caching similar to other extraction methods
+        '''
         if self.cache is not None and (n, key, is_train_folds) in self.cache:
             return self.cache[n, key, is_train_folds]
 
@@ -355,13 +359,13 @@ def score(
      y_train,
      scorer,
      error_score,
-     train_sample_weight=None,
-     test_sample_weight=None,
+     sample_weight=None,
+     eval_sample_weight=None,
 ):
     est, fit_time = est_and_time
     start_time = default_timer()
     try:
-        test_score = _score(est, X_test, y_test, scorer, test_sample_weight)
+        test_score = _score(est, X_test, y_test, scorer, eval_sample_weight)
     except Exception:
         if error_score == "raise":
             raise
@@ -371,7 +375,7 @@ def score(
     score_time = default_timer() - start_time
     if X_train is None:
         return fit_time, test_score, score_time
-    train_score = _score(est, X_train, y_train, scorer, train_sample_weight)
+    train_score = _score(est, X_train, y_train, scorer, sample_weight)
     return fit_time, test_score, score_time, train_score
 
 
@@ -416,7 +420,7 @@ def fit_and_score(
         if eval_weight_source in fit_test_params and fit_test_params[eval_weight_source] is not None:
             eval_sample_weight_test = fit_test_params[eval_weight_source]
 
-    return score(est_and_time, X_test, y_test, X_train, y_train, scorer, error_score, train_sample_weight=eval_sample_weight_train, test_sample_weight=eval_sample_weight_test)
+    return score(est_and_time, X_test, y_test, X_train, y_train, scorer, error_score, sample_weight=eval_sample_weight_train, eval_sample_weight=eval_sample_weight_test)
 
 
 def _store(

@@ -152,8 +152,15 @@ def build_graph(
         return_train_score=return_train_score,
         cache_cv=cache_cv,
     )
+
+
     cv_name = "cv-split-" + main_token
-    if iid:
+    ## DO WE NEED TO ADD SUPPORT FOR TPOP AND PATCH?
+    if 'sample_weight' in fit_params:
+        weights = "cv-n-weights-" + main_token
+        fold_weights = [fld[1][1] for fld in _get_fit_params(cv_name, fit_params, n_splits)]
+        dsk[weights] = fold_weights
+    elif iid:
         weights = "cv-n-samples-" + main_token
         dsk[weights] = (cv_n_samples, cv_name)
         scores = keys[1:]
@@ -222,7 +229,11 @@ def build_cv_graph(
     cv_name = "cv-split-" + main_token
     dsk[cv_name] = (cv_split, cv, X_name, y_name, groups_name, is_pairwise, cache_cv)
 
-    if iid:
+    if 'sample_weight' in fit_params:
+        weights = "cv-n-weights-" + main_token
+        fold_weights = [ fld[1][1] for fld in _get_fit_params(cv_name, fit_params, n_splits) ]
+        dsk[weights] = fold_weights
+    elif iid:
         weights = "cv-n-samples-" + main_token
         dsk[weights] = (cv_n_samples, cv_name)
     else:
@@ -292,6 +303,9 @@ def normalize_params(params):
 
 
 def _get_fit_params(cv, fit_params, n_splits):
+    '''
+        _get_fit_params gets index given by fold number and the fit_params for that folds train folds and test fold
+    '''
     if not fit_params:
         return [(n, (None,None)) for n in range(n_splits)]
     keys = []
@@ -512,7 +526,7 @@ def do_fit_transform(
             params,
             Xs,
             ys,
-            fit_params,
+            fit_params[0],
             n_splits,
             error_score,
             True,
@@ -528,7 +542,7 @@ def do_fit_transform(
             params,
             Xs,
             ys,
-            fit_params,
+            fit_params[0],
             n_splits,
             error_score,
         )
@@ -1262,12 +1276,23 @@ class DaskBaseSearchCV(BaseEstimator, MetaEstimatorMixin):
         else:
             out = scheduler(dsk, keys, num_workers=n_jobs)
 
-        if self.iid:
+        distribution_warning = ' No explicit "eval_sample_weight" using sample_weights (if available or) equal / no weights. ' \
+                               'No weights is only appropriate if train data is representative of test and holdout data without any weighting. ' \
+                               'Sampling_weight as eval_sample_weight is only appropriate ' \
+                               'if the sampling weigths adjust data to match test/holdout distribution.'
+
+        if ("sample_weight" in fit_params) or ("eval_sample_weight" in fit_params) or self.iid:
             weights = out[0]
             scores = out[1:]
+            if "eval_sample_weight" in fit_params:
+                weights = np.array([np.sum(x["eval_sample_weight"]) for x in weights])
+            elif "sample_weight" in fit_params:
+                weights = np.array([np.sum(x["sample_weight"]) for x in weights])
+                logger.warning(distribution_warning)
         else:
             weights = None
             scores = out
+            logger.warning(distribution_warning)
 
         if multimetric:
             metrics = list(scorer.keys())

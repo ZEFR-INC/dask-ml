@@ -982,15 +982,16 @@ def test_mock_with_fit_param_raises():
     (accuracy_score, True, False, [100000, 100000, 100000, 100000]),
     (accuracy_score, True, False, [200000, 100000, 200000, 100000]),
     (accuracy_score, True, False, [999999, 1, 999999, 1]),
-    (accuracy_score, True, False, [2000000, 1000000, 1, 999999]), # ACTUAL: 0.25000025, DESIRED: 0.8333328333333333
-    (log_loss, False, True, [2500000, 500000, 200000, 100000]), # ACTUAL: -0.5389724766321401 DESIRED: -0.5435376885817268
-    (brier_score_loss, False, True, [2500000, 500000, 200000, 100000]), # ACTUAL: -0.17424242424242425, DESIRED: -0.1805555555560682
+    (accuracy_score, True, False, [2000000, 1000000, 1, 999999]),
+    (log_loss, False, True, [2500000, 500000, 200000, 100000]),
+    (brier_score_loss, False, True, [2500000, 500000, 200000, 100000]),
 ])
 def test_sample_weight_cross_validation(
         metric, greater_is_better, needs_proba, sample_wt):
     # Test that cross validation properly uses sample_weight from fit_params
     # when calculating the desired metrics.
 
+    # this is train and predict at once
     def train(y, norm1_wt, needs_proba):
         m = [np.dot(y, norm1_wt)] * len(y)
         return m if needs_proba else np.round(m)
@@ -1031,7 +1032,9 @@ def test_sample_weight_cross_validation(
     )
 
     gscv.fit(X, y, sample_weight=sample_weight)
+
     best_score = gscv.best_score_
+
     np.testing.assert_almost_equal(exp_cv_score, best_score, decimal=5)
 
     # Assert that sample_weight for each fold is normalized by the L1 norm.

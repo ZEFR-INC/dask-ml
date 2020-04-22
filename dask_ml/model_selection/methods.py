@@ -104,41 +104,40 @@ class CVCache:
             [i.sum() if i.dtype == bool else len(i) for i in pluck(1, self.splits)]
         )
 
-    def extract(self, X, y, n, is_x=True, is_train=True):
+    def extract(self, X, y, n, is_x=True, is_train_folds=True):
         if is_x:
             if self.pairwise:
-                return self._extract_pairwise(X, y, n, is_train=is_train)
-            return self._extract(X, y, n, is_x=True, is_train=is_train)
+                return self._extract_pairwise(X, y, n, is_train_folds=is_train_folds)
+            return self._extract(X, y, n, is_x=True, is_train_folds=is_train_folds)
         if y is None:
             return None
-        return self._extract(X, y, n, is_x=False, is_train=is_train)
+        return self._extract(X, y, n, is_x=False, is_train_folds=is_train_folds)
 
-    def extract_param(self, key, x, n, is_train=True):
-        if self.cache is not None and (n, key, is_train) in self.cache:
-            return self.cache[n, key, is_train]
-        # is_train refers to the subsample of the train that is in the train folds
-        # train_samples refers to all folds . this is confusing
-        inds = self.splits[n][0] if is_train else self.splits[n][1]
+    def extract_param(self, key, x, n, is_train_folds=True):
+        if self.cache is not None and (n, key, is_train_folds) in self.cache:
+            return self.cache[n, key, is_train_folds]
+
+        inds = self.splits[n][0] if is_train_folds else self.splits[n][1]
         out = _index_param_value( self.num_train_samples, x, inds)
 
         if self.cache is not None:
-            self.cache[n, key, is_train] = out
+            self.cache[n, key, is_train_folds] = out
         return out
 
-    def _extract(self, X, y, n, is_x=True, is_train=True):
-        if self.cache is not None and (n, is_x, is_train) in self.cache:
-            return self.cache[n, is_x, is_train]
+    def _extract(self, X, y, n, is_x=True, is_train_folds=True):
+        if self.cache is not None and (n, is_x, is_train_folds) in self.cache:
+            return self.cache[n, is_x, is_train_folds]
 
-        inds = self.splits[n][0] if is_train else self.splits[n][1]
+        inds = self.splits[n][0] if is_train_folds else self.splits[n][1]
         result = _safe_indexing(X if is_x else y, inds)
 
         if self.cache is not None:
-            self.cache[n, is_x, is_train] = result
+            self.cache[n, is_x, is_train_folds] = result
         return result
 
-    def _extract_pairwise(self, X, y, n, is_train=True):
-        if self.cache is not None and (n, True, is_train) in self.cache:
-            return self.cache[n, True, is_train]
+    def _extract_pairwise(self, X, y, n, is_train_folds=True):
+        if self.cache is not None and (n, True, is_train_folds) in self.cache:
+            return self.cache[n, True, is_train_folds]
 
         if not hasattr(X, "shape"):
             raise ValueError(
@@ -148,10 +147,10 @@ class CVCache:
         if X.shape[0] != X.shape[1]:
             raise ValueError("X should be a square kernel matrix")
         train, test = self.splits[n]
-        result = X[np.ix_(train if is_train else test, train)]
+        result = X[np.ix_(train if is_train_folds else test, train)]
 
         if self.cache is not None:
-            self.cache[n, True, is_train] = result
+            self.cache[n, True, is_train_folds] = result
         return result
 
 
@@ -164,12 +163,12 @@ def cv_n_samples(cvs):
     return cvs.num_test_samples()
 
 
-def cv_extract(cvs, X, y, is_X, is_train, n):
-    return cvs.extract(X, y, n, is_X, is_train)
+def cv_extract(cvs, X, y, is_X, is_train_folds, n):
+    return cvs.extract(X, y, n, is_X, is_train_folds)
 
 
-def cv_extract_params(cvs, keys, vals, n, is_train):
-    return {k: cvs.extract_param(tok, v, n, is_train) for (k, tok), v in zip(keys, vals)}
+def cv_extract_params(cvs, keys, vals, n, is_train_folds):
+    return {k: cvs.extract_param(tok, v, n, is_train_folds) for (k, tok), v in zip(keys, vals)}
 
 
 def _maybe_timed(x):
@@ -272,7 +271,6 @@ def fit_transform(
 
     return (est, fit_time), Xt
 
-
 def _apply_scorer(estimator, X, y, scorer, sample_weight):
     """Applies the scorer to the estimator, given the data and sample_weight.
 
@@ -357,9 +355,9 @@ def score(
      y_train,
      scorer,
      error_score,
-     test_sample_weight=None,
      train_sample_weight=None,
- ):
+     test_sample_weight=None,
+):
     est, fit_time = est_and_time
     start_time = default_timer()
     try:
@@ -395,6 +393,17 @@ def fit_and_score(
     y_train = cv.extract(X, y, n, False, True)
     X_test = cv.extract(X, y, n, True, False)
     y_test = cv.extract(X, y, n, False, False)
+
+    '''
+        Support for lightGBM evaluation data sets within folds.         
+        https: // lightgbm.readthedocs.io / en / latest / pythonapi / lightgbm.LGBMClassifier.html
+
+    '''
+    if 'eval_set' in fit_params:
+        fit_params['eval_set'] = fit_test_params['eval_set']
+        fit_params['eval_names'] = fit_test_params['eval_names']
+        fit_params['eval_sample_weight'] = fit_test_params['eval_sample_weight']
+
     est_and_time = fit(est, X_train, y_train, error_score, fields, params, fit_params)
     if not return_train_score:
         X_train = y_train = None
@@ -407,7 +416,7 @@ def fit_and_score(
         if eval_weight_source in fit_test_params and fit_test_params[eval_weight_source] is not None:
             eval_sample_weight_test = fit_test_params[eval_weight_source]
 
-    return score(est_and_time, X_test, y_test, X_train, y_train, scorer, error_score, eval_sample_weight_train, eval_sample_weight_test)
+    return score(est_and_time, X_test, y_test, X_train, y_train, scorer, error_score, train_sample_weight=eval_sample_weight_train, test_sample_weight=eval_sample_weight_test)
 
 
 def _store(

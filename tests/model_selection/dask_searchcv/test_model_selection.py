@@ -976,18 +976,19 @@ def test_mock_with_fit_param_raises():
         clf.fit(X, y)
 
 
-@pytest.mark.parametrize("metric,greater_is_better,needs_proba,sample_wt", [
-    (accuracy_score, True, False, [1, 999999, 1, 999999]),
-    (accuracy_score, True, False, [100000, 200000, 100000, 200000]),
-    (accuracy_score, True, False, [100000, 100000, 100000, 100000]),
-    (accuracy_score, True, False, [200000, 100000, 200000, 100000]),
-    (accuracy_score, True, False, [999999, 1, 999999, 1]),
-    (accuracy_score, True, False, [2000000, 1000000, 1, 999999]),
-    (log_loss, False, True, [2500000, 500000, 200000, 100000]),
-    (brier_score_loss, False, True, [2500000, 500000, 200000, 100000]),
+@pytest.mark.parametrize("metric,greater_is_better,needs_proba,estimator,estimator_params,sample_wt", [
+    (accuracy_score, True, False, LogisticRegression(), {"random_state": [15432], "solver": ["lbfgs"]}, [1, 999999, 1, 999999]),
+    (accuracy_score, True, False, LogisticRegression(), {"random_state": [15432], "solver": ["lbfgs"]}, [100000, 200000, 100000, 200000]),
+    (accuracy_score, True, False, LogisticRegression(), {"random_state": [15432], "solver": ["lbfgs"]}, [100000, 100000, 100000, 100000]),
+    (accuracy_score, True, False, LogisticRegression(), {"random_state": [15432], "solver": ["lbfgs"]}, [200000, 100000, 200000, 100000]),
+    (accuracy_score, True, False, LogisticRegression(), {"random_state": [15432], "solver": ["lbfgs"]}, [999999, 1, 999999, 1]),
+    (accuracy_score, True, False, LogisticRegression(), {"random_state": [15432], "solver": ["lbfgs"]}, [2000000, 1000000, 1, 999999]),
+    (accuracy_score, True, False, Pipeline([("clf", LogisticRegression())]), {"clf__random_state": [15432], "clf__solver": ["lbfgs"]}, [2000000, 1000000, 1, 999999]),
+    (log_loss, False, True, LogisticRegression(), {"random_state": [15432], "solver": ["lbfgs"]}, [2500000, 500000, 200000, 100000]),
+    (brier_score_loss, False, True, LogisticRegression(), {"random_state": [15432], "solver": ["lbfgs"]}, [2500000, 500000, 200000, 100000]),
 ])
 def test_sample_weight_cross_validation(
-        metric, greater_is_better, needs_proba, sample_wt):
+        metric, greater_is_better, needs_proba, estimator, estimator_params, sample_wt):
     # Test that cross validation properly uses sample_weight from fit_params
     # when calculating the desired metrics.
 
@@ -1024,14 +1025,17 @@ def test_sample_weight_cross_validation(
 
     # There's nothing special about GridSearchCV. Could be RandomizedSearchCV.
     gscv = dcv.GridSearchCV(
-        LogisticRegression(),
-        {"random_state": [15432], "solver": ["lbfgs"]},  # parameters
+        estimator,
+        estimator_params,  # parameters
         scoring=make_scorer(metric, greater_is_better, needs_proba),
         cv=2,
         return_train_score=True
     )
 
-    gscv.fit(X, y, sample_weight=sample_weight)
+    if isinstance(estimator, Pipeline):
+        gscv.fit(X, y, clf__sample_weight=sample_weight)
+    else:
+        gscv.fit(X, y, sample_weight=sample_weight)
 
     best_score = gscv.best_score_
 

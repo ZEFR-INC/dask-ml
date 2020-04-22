@@ -157,9 +157,11 @@ def build_graph(
     cv_name = "cv-split-" + main_token
 
     ## DO WE NEED TO ADD SUPPORT FOR TPOP AND PATCH?
-    if 'sample_weight' in fit_params:
+    eval_weight_source = _get_weights_source(fit_params)
+    if eval_weight_source is not None :
         weights = "cv-n-weights-" + main_token
-        fold_weights = [fld[1][1] for fld in _get_fold_fit_params(cv_name, fit_params, n_splits)]
+        # get test fold weights for all folds
+        fold_weights = [fld[1][1] for fld in _get_n_folds_fit_params(cv_name, fit_params, n_splits, keys_filtered=[eval_weight_source])]
         dsk[weights] = fold_weights
     elif iid:
         weights = "cv-n-samples-" + main_token
@@ -230,10 +232,11 @@ def build_cv_graph(
     cv_name = "cv-split-" + main_token
     dsk[cv_name] = (cv_split, cv, X_name, y_name, groups_name, is_pairwise, cache_cv)
 
-    if 'sample_weight' in fit_params:
+    eval_weight_source = _get_weights_source(fit_params)
+    if eval_weight_source is not None :
         weights = "cv-n-weights-" + main_token
         # get test fold weights for all folds
-        fold_weights = [fld[1][1] for fld in _get_fold_fit_params(cv_name, fit_params, n_splits)]
+        fold_weights = [fld[1][1] for fld in _get_n_folds_fit_params(cv_name, fit_params, n_splits, keys_filtered=[eval_weight_source])]
         dsk[weights] = fold_weights
     elif iid:
         weights = "cv-n-samples-" + main_token
@@ -303,18 +306,49 @@ def normalize_params(params):
 
     return fields, tokens, params2
 
-
-def _get_fold_fit_params(cv, fit_params, n_splits):
-    '''
-        _get_fit_params gets index given by fold number and the fit_params for that folds train folds and test fold
-    '''
-    if not fit_params:
-        return [(n, (None,None)) for n in range(n_splits)]
+def _generate_fit_params_key_vals(fit_params, keys_filtered=None):
     keys = []
     vals = []
     for name, (full_name, val) in fit_params.items():
+        if keys_filtered is not None and name not in keys_filtered:
+            continue
         vals.append(val)
         keys.append((name, full_name))
+    return keys, vals
+
+def _get_weights_source(fit_params):
+    '''
+        _get_weights_source returns the weights source. sklearn pipelines subscript the parameter names such that a "samples_weight" parameter must be resolved
+        to "clf__samples_weight" for some classifier "clf" in an sklearn pipeline. Also support eval_sample_weight as a priority source.
+    '''
+    eval_weight_source = None
+    if fit_params is None:
+        return eval_weight_source
+
+    # sklearn subscripting adds __ scores to step variables
+    for candidate_param in fit_params:
+        if "eval_sample_weight" in candidate_param:
+            eval_weight_source = candidate_param
+            break
+        elif "sample_weight" in candidate_param:
+            eval_weight_source = candidate_param
+            break
+    return eval_weight_source
+
+
+def _get_n_folds_fit_params(cv, fit_params, n_splits, keys_filtered=None):
+    '''
+        _get_n_folds_fit_params gets index given by fold number and the fit_params for that folds train folds and test fold
+
+        cv: cv  dask task name,
+        fit_params: keys of fit params in (name, full_name) format
+        vals: values of fit params
+        n_splits: fold index
+        keys_filtered:
+    '''
+    if not fit_params:
+        return [(n, (None,None)) for n in range(n_splits)]
+    keys, vals = _generate_fit_params_key_vals(fit_params, keys_filtered=keys_filtered)
     return [(n, ( (cv_extract_params, cv, keys, vals, n, True), (cv_extract_params, cv, keys, vals, n, False)) ) for n in range(n_splits)]
 
 
@@ -344,7 +378,7 @@ def do_fit_and_score(
 ):
     if not isinstance(est, Pipeline):
         # Fitting and scoring can all be done as a single task
-        n_and_fold_fit_params = _get_fold_fit_params(cv, fit_params, n_splits)
+        n_and_fold_fit_params = _get_n_folds_fit_params(cv, fit_params, n_splits)
 
         est_type = type(est).__name__.lower()
         est_name = "%s-%s" % (est_type, main_token)
@@ -408,7 +442,19 @@ def do_fit_and_score(
 
         scores = []
         scores_append = scores.append
+
+        eval_weight_source = _get_weights_source(fit_params)
+        w_train, w_test = None, None
+
         for n in range(n_splits):
+            if eval_weight_source is not None:
+                # format to keys with full information compatible with cv_extract functions
+                keys, vals = _generate_fit_params_key_vals(fit_params, keys_filtered=[eval_weight_source])
+                # dask evaluation requires wrapping into function to allow the function to be evaluated once cv object is resolved
+                def extract_param(cvs,k,v,n,fld):
+                    return cvs.extract_param(k,v,n,fld)
+                w_train, w_test = (extract_param, cv, keys[0], vals[0], n,True), (extract_param, cv, keys[0], vals[0], n,False)
+
             if return_train_score:
                 xtrain = X_train + (n,)
                 ytrain = y_train + (n,)
@@ -428,6 +474,8 @@ def do_fit_and_score(
                     ytrain,
                     scorer,
                     error_score,
+                    w_train,
+                    w_test
                 )
                 scores_append((score_name, m, n))
     return scores
@@ -464,7 +512,7 @@ def do_fit(
             False,
         )
     else:
-        n_and_fold_fit_params = _get_fold_fit_params(cv, fit_params, n_splits)
+        n_and_fold_fit_params = _get_n_folds_fit_params(cv, fit_params, n_splits)
 
         if params is None:
             params = tokens = repeat(None)
@@ -549,7 +597,7 @@ def do_fit_transform(
             error_score,
         )
     else:
-        n_and_fold_fit_params = _get_fold_fit_params(cv, fit_params, n_splits)
+        n_and_fold_fit_params = _get_n_folds_fit_params(cv, fit_params, n_splits)
 
         if params is None:
             params = tokens = repeat(None)
@@ -643,7 +691,6 @@ def _do_fit_step(
 ):
     sub_fields, sub_inds = map(list, unzip(step_fields_lk[step_name], 2))
     sub_fit_params = fit_params_lk[step_name]
-
     if step_name in field_to_index:
         # The estimator may change each call
         new_fits = {}
@@ -1283,14 +1330,15 @@ class DaskBaseSearchCV(BaseEstimator, MetaEstimatorMixin):
                                'Sampling_weight as eval_sample_weight is only appropriate ' \
                                'if the sampling weigths adjust data to match test/holdout distribution.'
 
-        if ("sample_weight" in fit_params) or ("eval_sample_weight" in fit_params) or self.iid:
+        eval_weight_source = _get_weights_source(fit_params)
+
+        if eval_weight_source is not None or self.iid:
             weights = out[0]
             scores = out[1:]
             # reduce weights in folds to support cross fold averaging
-            if "eval_sample_weight" in fit_params:
-                weights = np.array([np.sum(x["eval_sample_weight"]) for x in weights])
-            elif "sample_weight" in fit_params:
-                weights = np.array([np.sum(x["sample_weight"]) for x in weights])
+            if eval_weight_source is not None:
+                weights = np.array([np.sum(x[eval_weight_source]) for x in weights])
+            if not "eval_sample_weight" in eval_weight_source:
                 logger.warning(distribution_warning)
         else:
             weights = None
